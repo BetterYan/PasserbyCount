@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PasserbyCount · 实现原理</title>
+<style>
+  :root {
+    --ink: #111;
+    --ink-2: #444;
+    --ink-3: #6b7280;
+    --line: #e3e4e6;
+    --bg: #ffffff;
+    --bg-soft: #f7f8f9;
+    --accent: #111;
+    --code-bg: #1b1d1f;
+    --code-ink: #e8e8e8;
+    --warn-bg: #fff8e6;
+    --warn-line: #e8c56a;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei",
+                 "PingFang SC", "Hiragino Sans GB", sans-serif;
+    font-size: 15px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { display: flex; max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+  /* ---------- 侧边目录 ---------- */
+  nav {
+    position: sticky;
+    top: 0;
+    align-self: flex-start;
+    width: 220px;
+    flex: 0 0 220px;
+    padding: 40px 20px 40px 0;
+    max-height: 100vh;
+    overflow-y: auto;
+    font-size: 13px;
+  }
+  nav h2 {
+    font-size: 11px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 12px;
+    font-weight: 600;
+  }
+  nav a {
+    display: block;
+    padding: 4px 0 4px 10px;
+    color: var(--ink-2);
+    text-decoration: none;
+    border-left: 2px solid var(--line);
+  }
+  nav a:hover { color: var(--ink); border-left-color: var(--ink); }
+  /* ---------- 正文 ---------- */
+  main { flex: 1 1 auto; min-width: 0; padding: 40px 0 96px; }
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 28px;
+    margin-bottom: 36px;
+  }
+  header.hero .kicker {
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 12px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  h1 { font-size: 30px; line-height: 1.3; margin: 10px 0 8px; letter-spacing: -.01em; }
+  .sub { color: var(--ink-2); font-size: 15px; max-width: 62ch; }
+  h2.sec {
+    font-size: 21px;
+    margin: 52px 0 14px;
+    padding-top: 4px;
+    letter-spacing: -.01em;
+  }
+  h2.sec .num {
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 13px;
+    color: var(--ink-3);
+    margin-right: 10px;
+    vertical-align: 2px;
+  }
+  h3 { font-size: 16px; margin: 28px 0 8px; }
+  p { margin: 10px 0; }
+  ul, ol { padding-left: 22px; margin: 10px 0; }
+  li { margin: 4px 0; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Cascadia Mono", monospace;
+    font-size: .88em;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 5px;
+    white-space: nowrap;
+  }
+  pre {
+    background: var(--code-bg);
+    color: var(--code-ink);
+    padding: 16px 18px;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Cascadia Mono", monospace;
+    font-size: 12.5px;
+    line-height: 1.65;
+    margin: 14px 0;
+  }
+  pre code { background: none; border: 0; padding: 0; color: inherit; white-space: pre; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+  td code { white-space: nowrap; }
+  .note {
+    border-left: 3px solid var(--ink);
+    background: var(--bg-soft);
+    padding: 12px 16px;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  .warn {
+    border-left: 3px solid var(--warn-line);
+    background: var(--warn-bg);
+    padding: 12px 16px;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 900px) {
+    nav { display: none; }
+    .grid2 { grid-template-columns: 1fr; }
+    h1 { font-size: 24px; }
+  }
+  /* ---------- 屏幕模拟 ---------- */
+  .oled-frame {
+    background: #000;
+    border-radius: 10px;
+    padding: 18px 20px;
+    display: inline-block;
+    border: 6px solid #2a2c2e;
+    box-shadow: 0 8px 24px rgba(0,0,0,.18);
+  }
+  .oled {
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    color: #fff;
+    background: #000;
+    line-height: 1.15;
+    white-space: pre;
+    font-size: 13px;
+    letter-spacing: .02em;
+  }
+  .oled .dim { color: #555; }
+  .caption { font-size: 12.5px; color: var(--ink-3); margin-top: 8px; }
+  /* ---------- 流程图 ---------- */
+  .flow {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px;
+    background: var(--bg-soft);
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.7;
+    overflow-x: auto;
+    white-space: pre;
+  }
+  footer {
+    border-top: 1px solid var(--line);
+    margin-top: 56px;
+    padding-top: 16px;
+    font-size: 13px;
+    color: var(--ink-3);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <h2>目录</h2>
+  <a href="#goal">1. 目标与约束</a>
+  <a href="#hardware">2. 硬件与运行环境</a>
+  <a href="#arch">3. 系统架构</a>
+  <a href="#capture">4. 抓包层</a>
+  <a href="#count">5. 统计层</a>
+  <a href="#display">6. 显示层</a>
+  <a href="#concurrency">7. 并发与时序</a>
+  <a href="#params">8. 关键参数</a>
+  <a href="#limits">9. 精度与局限</a>
+  <a href="#files">10. 代码结构</a>
+</nav>
+
+<main>
+
+<header class="hero">
+  <div class="kicker">ESP32-C5 · 802.11 Probe Request · SSD1306</div>
+  <h1>PasserbyCount 实现原理</h1>
+  <p class="sub">
+    用一块 ESP32-C5 的 Wi-Fi 射频在混杂模式下监听周围的 Probe Request，
+    按 MAC 去重并做滑动窗口统计，估算身边有多少人，最后在 1.3 寸单色 OLED 上实时显示。
+  </p>
+</header>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="goal"><span class="num">01</span>目标与约束</h2>
+
+<p>
+  要做的事情只有一句话：<strong>不开热点、不连路由器、不碰任何人，仅靠"听"来估计周围有多少台 Wi-Fi 设备。</strong>
+  手机在连接 Wi-Fi 之前会主动广播 Probe Request（探测请求），这类帧是明文的管理帧，
+  内容里有发送方的 MAC 地址和接收信号强度，因此可以被动统计。
+</p>
+
+<p>设计时被约束住的几个点，直接决定了后面的所有取舍：</p>
+<ul>
+  <li><strong>不能阻塞 Wi-Fi 任务。</strong>抓包回调跑在驱动任务里，一旦耗时过长，后续帧会被丢弃，统计直接失真。</li>
+  <li><strong>不能动态分配内存。</strong>回调频率可达上千帧每秒，任何 <code>malloc</code> 都可能造成碎片和不可预测的延迟。</li>
+  <li><strong>单射频只能守一个信道。</strong>ESP32-C5 只有一套 Wi-Fi 射频，想覆盖多个信道只能跳频，跳频期间必然漏帧。</li>
+  <li><strong>屏幕是 1bpp。</strong>只有亮和不亮两种状态，没有灰度、没有抗锯齿，字体和图形都必须按"纯二值"来设计。</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="hardware"><span class="num">02</span>硬件与运行环境</h2>
+
+<div class="grid2">
+  <div>
+    <h3>接线</h3>
+    <table>
+      <tr><th>ESP32-C5</th><th>OLED 模块</th></tr>
+      <tr><td>3V3</td><td>VCC</td></tr>
+      <tr><td>GND</td><td>GND</td></tr>
+      <tr><td>GPIO23</td><td>SDA</td></tr>
+      <tr><td>GPIO24</td><td>SCL</td></tr>
+    </table>
+    <p class="caption">I2C 地址 <code>0x3C</code>（启动时会自动探测 <code>0x3C</code>/<code>0x3D</code>），速率 400kHz。</p>
+  </div>
+  <div>
+    <h3>软件栈</h3>
+    <table>
+      <tr><th>项</th><th>版本 / 取值</th></tr>
+      <tr><td>ESP-IDF</td><td>v6.1</td></tr>
+      <tr><td>目标芯片</td><td>esp32c5（RISC-V，单核 240MHz）</td></tr>
+      <tr><td>Flash / PSRAM</td><td>16MB / 8MB（N16R8）</td></tr>
+      <tr><td>图形库</td><td>LVGL 9.2（Kconfig 配置，<code>LV_CONF_SKIP</code>）</td></tr>
+      <tr><td>app 分区</td><td>1.5MB（固件实测 1.09MB，余 29%）</td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="arch"><span class="num">03</span>系统架构</h2>
+
+<p>整个固件由 3 个自有任务 + Wi-Fi 驱动任务构成，数据单向流动，层与层之间只通过队列和快照交互。</p>
+
+<div class="flow">   Wi-Fi 射频（单射频，只守一个信道）
+        │
+        │  混杂模式回调：只做 3 个判断，然后入队，绝不阻塞
+        ▼
+   ┌─────────────┐
+   │  RX Queue   │  128 条 × 8 字节 ≈ 1KB，满了丢帧
+   └─────────────┘
+        │
+        ▼
+   sniff_rx 任务（优先级 5）
+        ├──► people_counter_feed()   FNV-1a 哈希 + 组相联查表，O(1)
+        ├──► people_counter_tick()   每秒一次，重算窗口人数/历史曲线
+        └──► 每 10 秒串口打印一行统计
+                     │
+                     │  快照拷贝（临界区，< 60 字节）
+                     ▼
+   ┌──────────────────────────────┐
+   │  pc_snapshot_t               │
+   └──────────────────────────────┘
+                     │
+                     ▼
+   lvgl 任务（优先级 2）── ui.c 的 lv_timer 每 500ms 取快照
+                     │
+                     │  I1 位图 → 页纵向位序重排
+                     ▼
+             OLED 显存 1024 字节 ──I2C 400kHz──► 屏
+
+   另有 wifi_hop 任务（优先级 4）：每 300ms 切一次信道</div>
+
+<div class="note">
+  关键点：<strong>没有任何一层直接调用下一层</strong>。抓包层不知道统计层的存在，统计层不知道屏幕的存在，
+  唯一的耦合是 <code>pc_snapshot_t</code> 这个只读快照结构。这样任何一层出问题都不会拖垮另一层。
+</div>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="capture"><span class="num">04</span>抓包层：混杂模式怎么拿到 Probe Request</h2>
+
+<h3>4.1 进入混杂模式</h3>
+<p>
+  先用 <code>WIFI_MODE_NULL</code> 初始化 Wi-Fi——不建 netif、不连任何 AP，只是把射频和 MAC 硬件拉起来，
+  这样既不占 IP 资源，也不会出现在别人的网络里。然后打开混杂模式，让硬件把所有收到的帧都送到回调，
+  而不是只接收发给自己的帧。
+</p>
+
+<pre><code>esp_wifi_init(&amp;cfg);                 // cfg 里把 RX 缓冲调大
+esp_wifi_set_storage(WIFI_STORAGE_RAM);
+esp_wifi_set_mode(WIFI_MODE_NULL);
+esp_wifi_set_country_code("CN", true);
+esp_wifi_start();
+
+wifi_promiscuous_filter_t filter = { .filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT };
+esp_wifi_set_promiscuous_filter(&amp;filter);
+esp_wifi_set_promiscuous_rx_cb(sniffer_rx_cb);
+esp_wifi_set_promiscuous(true);</code></pre>
+
+<p>
+  过滤器只放管理帧。注意<strong>故意不设置</strong> <code>WIFI_PROMIS_FILTER_MASK_FCSFAIL</code>，
+  这样 CRC 校验失败的残帧根本不会上送，回调里就少了一层判断。
+</p>
+
+<h3>4.2 一帧里我们关心什么</h3>
+
+<p>802.11 管理帧的头部是固定 24 字节，结构如下：</p>
+
+<table>
+  <tr><th>偏移</th><th>长度</th><th>字段</th><th>说明</th></tr>
+  <tr><td>0</td><td>2</td><td>Frame Control</td><td>高 4 位是子类型，bit2~3 是类型</td></tr>
+  <tr><td>2</td><td>2</td><td>Duration</td><td>忽略</td></tr>
+  <tr><td>4</td><td>6</td><td>Addr1</td><td>接收方（广播帧是 FF:FF:FF:FF:FF:FF）</td></tr>
+  <tr><td>10</td><td>6</td><td><strong>Addr2</strong></td><td><strong>发射端 = 终端自己的 MAC，这才是我们要的</strong></td></tr>
+  <tr><td>16</td><td>6</td><td>Addr3</td><td>BSSID，探测请求里通常也是广播</td></tr>
+  <tr><td>22</td><td>2</td><td>Sequence</td><td>忽略</td></tr>
+</table>
+
+<p>只认三种子类型，它们的共同点是"终端主动发起、携带真实源 MAC"：</p>
+
+<table>
+  <tr><th>子类型</th><th>名称</th><th>为什么算</th></tr>
+  <tr><td>4</td><td>Probe Request</td><td>手机扫描周围 AP 时广播，最主要的信号源</td></tr>
+  <tr><td>0</td><td>Association Request</td><td>连上 AP 的瞬间发出，说明人确实在现场</td></tr>
+  <tr><td>2</td><td>Reassociation Request</td><td>漫游时发出，同上</td></tr>
+</table>
+
+<p>
+  回调里还要做一道信号强度筛选：低于 <code>-85dBm</code> 的帧直接丢弃。
+  这一刀把"马路对面/上一层楼"的设备切掉，让统计口径更接近"周边"而不是"能收到的一切"。
+</p>
+
+<h3>4.3 为什么回调里不能干重活</h3>
+<p>
+  回调运行在 Wi-Fi 驱动任务（优先级 23）的上下文里。如果在这里解析 IE、查表、写屏幕，
+  轻则丢帧，重则触发看门狗复位。所以回调只做三件事：
+</p>
+<pre><code>static void sniffer_rx_cb(void *buf, wifi_promiscuous_pkt_type_t type)
+{
+    // 1. 长度 / RSSI 两个快速筛选
+    // 2. 判断类型与子类型
+    // 3. 拷贝 7 字节（MAC + RSSI）入队，非阻塞
+    if (xQueueSend(s_queue, &amp;rec, 0) != pdTRUE) {
+        s_dropped++;
+    }
+}</code></pre>
+
+<h3>4.4 信道跳频</h3>
+<p>
+  单射频同一时刻只能守一个信道，而 Probe Request 会出现在 1/6/11 三个互不重叠的主信道上
+  （这三个信道覆盖了绝大多数 AP 的部署）。<code>wifi_hop</code> 任务每 300ms 调一次
+  <code>esp_wifi_set_channel()</code>，轮一圈 0.9 秒。
+</p>
+<p>
+  跳频期间收不到帧，这是物理限制，无法消除。缩短驻留时间能提高覆盖频率，但每次切换本身也有开销，
+  实测 300ms 是比较均衡的取值。
+</p>
+<p>
+  C5 支持 5GHz，把 <code>PC_HOP_5G</code> 改成 1 会切换成
+  <code>WIFI_BAND_MODE_AUTO</code> 并加入 5G 信道。国家码设成 CN 时，合法 5G 信道是
+  36~64（含 DFS）和 149~165——这个范围就是开机日志 <code>wifi_5g_channel_mask=0x3e001fe</code>
+  里那几个 bit。
+</p>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="count"><span class="num">05</span>统计层：MAC 去重与滑动窗口</h2>
+
+<h3>5.1 为什么是"组相联表"而不是链表或哈希桶</h3>
+<p>
+  需求很明确：<strong>O(1) 查询、零动态分配、冲突时优雅降级</strong>。
+  链表需要遍历、哈希桶需要 malloc、开放寻址在删除时会破坏探测链。
+  最终选了固定大小的<strong>组相联（set-associative）</strong>结构：
+</p>
+
+<pre><code>FNV-1a(mac) ──► 组号 = hash &amp; 127      → 128 个组
+                                    └─ 每组 4 个槽位，组内线性比较
+                         总共 512 个槽位 × 16 字节 = 8KB 静态内存</code></pre>
+
+<p>每个槽位 16 字节：</p>
+<table>
+  <tr><th>字段</th><th>大小</th><th>用途</th></tr>
+  <tr><td><code>mac[6]</code></td><td>6B</td><td>设备 MAC</td></tr>
+  <tr><td><code>random</code></td><td>1B</td><td>本地管理位，标记随机化 MAC</td></tr>
+  <tr><td><code>rssi</code></td><td>1B</td><td>最后一次的信号强度</td></tr>
+  <tr><td><code>hits</code></td><td>2B</td><td>命中次数；<strong>为 0 表示槽位空闲</strong></td></tr>
+  <tr><td><code>last_ms</code></td><td>4B</td><td>最后一次出现的时间戳</td></tr>
+</table>
+
+<h3>5.2 查表流程</h3>
+<pre><code>1. 组播位为 1            → 直接丢弃（不可能是终端）
+2. 组内 4 个槽位比对 MAC  → 命中则更新 last_ms / rssi / hits，返回
+3. 组内有空槽            → 占用，total++
+4. 组满了                → 踢掉组内 last_ms 最小的那个，写入新 MAC，total++</code></pre>
+
+<p>
+  哈希冲突的后果被限制在"同一组的 4 个 MAC 互相挤占"，不会算错已有 MAC，
+  最坏情况只是提前忘记某个设备（<code>current</code> 少 1，<code>total</code> 可能重复计 1）。
+  512 个槽位在商圈、餐厅、地铁口这类场景下足够。
+</p>
+
+<h3>5.3 滑动窗口</h3>
+<p>
+  "当前人数"不是计数器，而是<strong>每秒重算一次的状态量</strong>：
+</p>
+<pre><code>current = 满足 (now - last_ms) &lt;= 60000ms 的槽位数量</code></pre>
+
+<p>
+  这样人走开 60 秒后自动从统计里消失，不需要任何"减一"操作，也就不存在漏减导致的数值漂移。
+  每秒扫一遍 512 个槽位，在 240MHz 的 RISC-V 上是微秒级开销。
+</p>
+
+<p>除了 <code>current</code>，同一趟扫描还顺便算出：</p>
+<ul>
+  <li><code>peak</code>：开机以来 <code>current</code> 的最大值（只增不减）；</li>
+  <li><code>total</code>：开机以来累计去重过的 MAC 数量；</li>
+  <li><code>rssi_avg</code>：窗口内所有设备的平均信号强度，可以粗略反映"离得多近"；</li>
+  <li><code>rate</code>：上一秒的帧速率，用来判断当前信道有多"忙"。</li>
+</ul>
+
+<h3>5.4 历史曲线</h3>
+<p>
+  保留最近 42 秒的 <code>current</code> 值，用环形方式推进：每次 tick 时整体右移一格，新值写进
+  <code>hist[0]</code>。这 42 个字节就是屏幕上那 42 根柱子的数据源。
+</p>
+
+<h3>5.5 快照与并发</h3>
+<p>
+  统计结果不是直接读全局变量。tick 把结果写进 <code>s_pub</code>，
+  界面侧用 <code>people_counter_get()</code> 在临界区里整块拷走（不到 60 字节）。
+  临界区短到不会影响抓包任务，同时保证界面永远看到一个自洽的数值组合，不会出现
+  "人数是新的、峰值是旧的"这种撕裂。
+</p>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="display"><span class="num">06</span>显示层：从 LVGL 位图到 SH1106 显存</h2>
+
+<p>这一层是整份代码里最容易踩坑的地方，有两处硬件特性必须处理。</p>
+
+<h3>6.1 为什么不用 esp_lcd 自带的 SSD1306 驱动</h3>
+<p>
+  1.3 寸 4 脚 I2C 模块绝大多数其实是 <strong>SH1106</strong> 而不是 SSD1306。
+  两者显存宽度不同：SH1106 是 132 列（128 像素居中，左右各空 2 列），SSD1306 是 128 列。
+  更关键的是 <strong>SH1106 不支持 SSD1306 的 <code>0x20/0x21/0x22</code> 寻址命令</strong>，
+  用 SSD1306 驱动会看到整屏雪花。
+</p>
+<p>
+  解决办法是只用两种芯片都支持的命令集——<strong>页寻址</strong>：
+</p>
+<pre><code>0xB0 | page        设置页地址（0~7）
+0x00 | (col &amp; 0x0F) 列地址低 4 位
+0x10 | (col &gt;&gt; 4)     列地址高 4 位
+然后连续写 128 字节    页内列地址自动 +1</code></pre>
+<p>
+  这也是 SSD1306 上电后的默认模式，所以同一套代码两种屏都能跑。
+  列偏移做成宏 <code>OLED_COL_OFFSET</code>：SH1106 填 2，SSD1306 填 0。
+</p>
+
+<h3>6.2 位序重排：LVGL 是横向的，屏是纵向的</h3>
+<p>
+  两个内存布局正好差 90 度的转置关系：
+</p>
+<table>
+  <tr><th></th><th>LVGL（I1 格式）</th><th>OLED 显存</th></tr>
+  <tr><td>排布方向</td><td>行优先，逐行铺开</td><td>按页纵向堆叠</td></tr>
+  <tr><td>字节内</td><td>MSB 在左（bit7 是最左像素）</td><td>LSB 在上（bit0 是最上面一行）</td></tr>
+  <tr><td>一字节表示</td><td>同一行的 8 个像素</td><td>同一列的 8 个像素</td></tr>
+</table>
+
+<p>
+  所以 LVGL 交出来的缓冲区不能直接推给屏，必须在 <code>flush_cb</code> 里逐像素做一次位搬运：
+</p>
+<pre><code>for (int y = 0; y &lt; 64; y++) {
+    for (int x = 0; x &lt; 128; x++) {
+        bool on = px_map[(128 / 8) * y + (x / 8)] &amp; (1 &lt;&lt; (7 - x % 8));
+        uint8_t *buf = &amp;s_fb[(128 * (y / 8)) + x];
+        if (on) *buf |=  (1 &lt;&lt; (y % 8));
+        else    *buf &amp;= ~(1 &lt;&lt; (y % 8));
+    }
+}</code></pre>
+<p>
+  8192 次循环，在 240MHz 上约 0.1ms，相比 I2C 传输时间可以忽略。
+</p>
+
+<h3>6.3 刷新一次要多久</h3>
+<p>
+  整屏 1024 字节，加上每页 3 条命令，400kHz 下大约 <strong>25ms</strong>。
+  LVGL 用 <code>LV_DISPLAY_RENDER_MODE_FULL</code> 渲染，每次都是整屏重画；
+  但 LVGL 只会对"发生变化的对象"触发重绘请求，界面没变化时根本不会调用 flush，
+  所以稳态下 I2C 占用很低。
+</p>
+
+<h3>6.4 界面布局</h3>
+<div class="grid2">
+  <div>
+    <div class="oled-frame">
+      <div class="oled">NOW                    12
+────────────────────
+PEAK 15 TOT 234
+CH06 -67dB 18/s
+▁▂▃▅▇▆▄▂▁▂▃▅▂▁▂▁▂▃</div>
+    </div>
+    <p class="caption">128×64 实际显示效果（示意）</p>
+  </div>
+  <div>
+    <table>
+      <tr><th>区域</th><th>内容</th></tr>
+      <tr><td>y 0~16</td><td>8px 标签 + 16px 大数字（右对齐）</td></tr>
+      <tr><td>y 18</td><td>1px 分隔线</td></tr>
+      <tr><td>y 21~29</td><td>峰值 / 累计</td></tr>
+      <tr><td>y 31~39</td><td>信道 / RSSI / 帧率</td></tr>
+      <tr><td>y 41~63</td><td>42 秒柱状图（2px 柱 + 1px 间距）</td></tr>
+    </table>
+    <p class="caption">
+      文字全部 ASCII：UNSCII 字库没有中文字形，中文需要额外挂 CJK 字库（会多占几十 KB Flash）。
+    </p>
+  </div>
+</div>
+
+<p>
+  柱状图的柱子是<strong>一次建好 42 个矩形对象</strong>，之后每次刷新只改
+  <code>position</code> 和 <code>size</code>，并且用缓存值做脏检查——高度没变就不碰对象，
+  避免无意义的重绘。
+</p>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="concurrency"><span class="num">07</span>并发与时序</h2>
+
+<table>
+  <tr><th>任务</th><th>优先级</th><th>栈</th><th>职责</th></tr>
+  <tr><td>Wi-Fi 驱动任务</td><td>23</td><td>—</td><td>收包、进回调</td></tr>
+  <tr><td><code>sniff_rx</code></td><td>5</td><td>4KB</td><td>出队、查表、每秒统计、日志</td></tr>
+  <tr><td><code>wifi_hop</code></td><td>4</td><td>3KB</td><td>每 300ms 切信道</td></tr>
+  <tr><td><code>lvgl</code></td><td>2</td><td>6KB</td><td>跑 <code>lv_timer_handler()</code>，500ms 刷新界面</td></tr>
+</table>
+
+<p>两个需要特别说明的同步点：</p>
+<ul>
+  <li>
+    <strong>队列</strong>负责跨任务传数据。长度为 128，满了就丢帧并计数（<code>drop</code>），
+    <strong>不做等待</strong>——宁可丢一帧，也不能让 Wi-Fi 任务卡住。
+  </li>
+  <li>
+    <strong>临界区</strong>只保护快照拷贝。表本身只在 <code>sniff_rx</code> 一个任务里读写，
+    所以 <code>feed()</code> 和 <code>tick()</code> 之间完全不需要加锁。
+  </li>
+</ul>
+
+<div class="note">
+  一个容易忽略的细节：<code>rx_task</code> 每次取到一帧后会先把队列里剩下的全部吃完，
+  然后再检查"是否过了一秒"。这样可以避免高流量时因为循环一直走出队分支而漏掉 tick。
+</div>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="params"><span class="num">08</span>关键参数</h2>
+
+<p>全部集中在 <code>main/app_config.h</code>，调参不需要动业务代码。</p>
+
+<table>
+  <tr><th>参数</th><th>默认值</th><th>影响</th></tr>
+  <tr><td><code>PC_ACTIVE_WINDOW_MS</code></td><td>60000</td><td>统计窗口。调大更"粘"，调小反应快但数值抖动</td></tr>
+  <tr><td><code>PC_RSSI_MIN</code></td><td>-85 dBm</td><td>距离门限。收紧到 -75 只看近处</td></tr>
+  <tr><td><code>PC_TABLE_SETS</code> × <code>PC_TABLE_WAYS</code></td><td>128 × 4</td><td>可记住的 MAC 总数（512），直接决定内存占用</td></tr>
+  <tr><td><code>PC_HOP_DWELL_MS</code></td><td>300</td><td>每信道驻留时间，越短覆盖越快、单信道越容易漏</td></tr>
+  <tr><td><code>PC_HOP_5G</code></td><td>0</td><td>是否扫 5GHz（C5 双频特性）</td></tr>
+  <tr><td><code>PC_FILTER_DATA_FRAMES</code></td><td>0</td><td>是否把 ToDS 上行数据帧也算作"有人在附近"</td></tr>
+  <tr><td><code>PC_IGNORE_RANDOM_MAC</code></td><td>0</td><td>是否过滤随机化 MAC</td></tr>
+  <tr><td><code>PC_UI_REFRESH_MS</code></td><td>500</td><td>屏幕刷新周期</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="limits"><span class="num">09</span>精度与局限</h2>
+
+<div class="warn">
+  <strong>这套方案统计的是"唯一 MAC 数"，不是"人数"。</strong>
+  下面每一条都会让这两者产生偏差，产品化时必须用现场数据标定。
+</div>
+
+<h3>会高估的因素</h3>
+<ul>
+  <li>
+    <strong>MAC 随机化。</strong>iOS / Android 在扫描时会用随机 MAC，同一台手机每轮换一个，
+    窗口越长重复计数越多。打开 <code>PC_IGNORE_RANDOM_MAC</code> 可以反向收紧，但会漏掉大部分现代手机。
+  </li>
+  <li>
+    <strong>一人多设备。</strong>手机 + 手表 + 耳机 + 平板，各算一个。常见的折算系数在 1.5~2.5 之间。
+  </li>
+  <li>
+    <strong>表满后的覆盖。</strong>被踢出表的 MAC 再次出现时会重复计入 <code>total</code>
+    （<code>current</code> 不受影响）。
+  </li>
+</ul>
+
+<h3>会低估的因素</h3>
+<ul>
+  <li><strong>跳频空档。</strong>单射频轮一圈 0.9 秒，跳走的这段时间该信道上的帧全部丢失。</li>
+  <li><strong>设备不主动扫描。</strong>已连接 AP 且屏幕熄灭的手机很少发 Probe Request。</li>
+  <li><strong>信号门限。</strong><code>-85dBm</code> 之外的设备不计入，等于给统计范围画了个圈。</li>
+</ul>
+
+<h3>时间维度上的滞后</h3>
+<p>
+  Probe Request 不是连续发出的，因此人数变化天然滞后 10~60 秒。
+  这也是把窗口设成 60 秒的原因——窗口太短会让数字剧烈跳动。
+</p>
+
+<h3>没有时钟</h3>
+<p>
+  板子上没有 RTC 电池，也不联网对时，所以"累计"是<strong>开机以来的累计</strong>，
+  不是"今日累计"。要做按天统计，需要加 SNTP 或外部 RTC，并在跨零点时清零。
+</p>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="files"><span class="num">10</span>代码结构</h2>
+
+<pre><code>PasserbyCount/
+├── CMakeLists.txt
+├── sdkconfig.defaults          目标芯片、分区大小、Wi-Fi RX 缓冲、LVGL 字体
+└── main/
+    ├── CMakeLists.txt
+    ├── idf_component.yml       LVGL 依赖
+    ├── app_config.h            全部可调参数
+    ├── PasserbyCount.c         app_main：NVS → 统计 → 屏 → Wi-Fi
+    ├── wifi_sniffer.c/.h       混杂模式、跳频、RX 队列
+    ├── people_counter.c/.h     MAC 去重表、滑窗统计、快照
+    ├── oled_port.c/.h          I2C + SH1106/SSD1306 + LVGL 移植层
+    └── ui.c/.h                 128×64 仪表盘</code></pre>
+
+<h3>构建与烧写</h3>
+<pre><code>idf.py set-target esp32c5     # 已在 sdkconfig.defaults 里指定，首次可省略
+idf.py build
+idf.py -p COMx flash monitor</code></pre>
+
+<h3>串口自检</h3>
+<p>开机打印复位原因，运行中每 10 秒一行统计：</p>
+<pre><code>I (312) app: PasserbyCount boot, reset reason: POWERON
+I (2450) oled: probe 0x3C -&gt; ACK(在线)
+I (2480) sniffer: promiscuous on, 3 channels, dwell 300ms, rssi_min -85dBm
+I (12480) sniffer: now=12 peak=15 total=234 frames=1893 rate=18/s rssi=-67 ch=6 drop=0</code></pre>
+
+<p><code>drop</code> 持续增长说明处理跟不上，优先调大 RX 缓冲或缩短 <code>PC_HOP_DWELL_MS</code>。</p>
+
+<footer>
+  PasserbyCount · ESP-IDF v6.1 · ESP32-C5 · 文档随代码同步更新
+</footer>
+
+</main>
+</div>
+</body>
+</html>
